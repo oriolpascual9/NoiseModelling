@@ -35,6 +35,8 @@ import java.io.IOException;
 import java.net.URL;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.text.NumberFormat;
+import java.sql.Statement;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -149,13 +151,15 @@ public class Main {
         options.addOption(databaseNameOption);
         Option printVersionOption = new Option("v", false,"Print version of all libraries");
         options.addOption(printVersionOption);
+        Option shutdownOption = new Option("c", "shutdown" ,false,"Do not shutdown compact the database at the end of the execution");
+        options.addOption(shutdownOption);
         Logger logger = LoggerFactory.getLogger("org.noise_planet");
         try {
             // Read parameters
             String workingDir = "";
             String scriptPath = "";
-            String databaseName = "h2gisdb";
-            Map<String, String> customParameters = new HashMap<>();
+            String databaseName = "";
+            Map<String, Object> customParameters = new HashMap<>();
             boolean printVersion = false;
 
             CommandLineParser commandLineParser = new DefaultParser();
@@ -172,6 +176,8 @@ public class Main {
             workingDir = commandLine.getOptionValue(workingDirOption.getOpt());
             scriptPath = commandLine.getOptionValue(scriptPathOption.getOpt());
             printVersion = commandLine.hasOption(printVersionOption.getOpt());
+            databaseName = commandLine.getOptionValue(databaseNameOption.getOpt(), "h2gisdb");
+            boolean shutdown = !commandLine.hasOption(shutdownOption.getOpt());
 
             if(printVersion) {
                 printBuildIdentifiers(logger);
@@ -206,7 +212,18 @@ public class Main {
                     commandLine = commandLineParser.parse(options, args);
                     for (Iterator<Option> it = commandLine.iterator(); it.hasNext(); ) {
                         Option option = it.next();
-                        customParameters.put(option.getOpt(), option.getValue());
+                        if (option.getType() == String.class) {
+                            customParameters.put(option.getOpt(), option.getValue());
+                        } else if (option.getType() == Boolean.class) {
+                            customParameters.put(option.getOpt(), Boolean.valueOf(option.getValue()));
+                        } else if (option.getType() == Integer.class) {
+                            customParameters.put(option.getOpt(), Integer.valueOf(option.getValue()));
+                        } else if (option.getType() == Double.class) {
+                            customParameters.put(option.getOpt(),
+                                    NumberFormat.getInstance(Locale.ROOT).parse(option.getValue()).doubleValue());
+                        } else {
+                            throw new IllegalArgumentException("Unsupported type for option " + option.getOpt());
+                        }
                     }
                 } catch (ParseException ex) {
                     logger.info(ex.getMessage());
@@ -219,6 +236,13 @@ public class Main {
                 Object result = script.invokeMethod("exec", new Object[] {connection, inputs});
                 if(result != null) {
                     logger.info(result.toString());
+                }
+                if(shutdown) {
+                    try (Statement st = connection.createStatement()) {
+                        logger.info("Shutdown compact the database..");
+                        st.execute("SHUTDOWN COMPACT");
+                        logger.info("done");
+                    }
                 }
             } catch (SQLException ex) {
                 while (ex != null) {
